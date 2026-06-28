@@ -1,5 +1,5 @@
 import { createContext, useCallback, useContext, useEffect, useId, useMemo, useRef, useState } from 'react'
-import { AnimatePresence, motion, useReducedMotion, type Variants } from 'motion/react'
+import { AnimatePresence, motion, useReducedMotion } from 'motion/react'
 import { DeskFolio } from './lib/DeskFolio.tsx'
 import { DialSlider } from './lib/DialSlider.tsx'
 import { haptic } from './lib/haptics.ts'
@@ -61,7 +61,7 @@ function EditableNameTag({ className = '' }: { className?: string }) {
   const ref = useRef<HTMLDivElement>(null)
   useEffect(() => {
     const el = ref.current
-    if (el && !el.textContent) el.textContent = 'Mort'
+    if (el && !el.textContent) el.textContent = 'Om'
   }, [])
 
   return (
@@ -74,7 +74,7 @@ function EditableNameTag({ className = '' }: { className?: string }) {
         suppressContentEditableWarning
         role="textbox"
         aria-label="Name"
-        data-ph="Mort"
+        data-ph="Om"
         spellCheck={false}
         onPointerDown={(e) => e.stopPropagation()}
         onClick={(e) => e.stopPropagation()}
@@ -166,289 +166,6 @@ function CheckItem({ initial, placeholder }: { initial?: string; placeholder?: s
   )
 }
 
-// journal highlighter markers (non-destructive)
-const HIGHLIGHTERS: Array<{ id: string; label: string; color: string; glow?: boolean }> = [
-  { id: 'sun', label: 'Sunny', color: '#ffe066' },
-  { id: 'rose', label: 'Rosey', color: '#ff9ec4' },
-  { id: 'mint', label: 'Minty', color: '#9be8b4' },
-  { id: 'sky', label: 'Sky', color: '#9ecbff' },
-  { id: 'violet', label: 'Violet', color: '#b8a8ff' },
-  { id: 'neon', label: 'Neon', color: '#ccff4d', glow: true },
-]
-
-/** wrap selection in a highlight span */
-function highlightSelection(color: string, glow?: boolean, nib: 'chisel' | 'bullet' | 'fine' = 'chisel'): boolean {
-  const sel = window.getSelection()
-  if (!sel || sel.isCollapsed || sel.rangeCount === 0) return false
-  const range = sel.getRangeAt(0)
-  const host = range.commonAncestorContainer
-  const el = host.nodeType === 1 ? (host as Element) : host.parentElement
-  if (!el || !el.closest('.df-edit')) return false // journal text only
-  const span = document.createElement('span')
-  span.className = `df-hl df-hl--${nib}${glow ? ' df-hl--glow' : ''}`
-  span.style.setProperty('--hl', color)
-  try {
-    range.surroundContents(span)
-  } catch {
-    // selection crosses boundaries: extract + wrap
-    try {
-      span.appendChild(range.extractContents())
-      range.insertNode(span)
-    } catch {
-      return false
-    }
-  }
-  sel.removeAllRanges()
-  return true
-}
-
-/** eraser: unwrap touched marker spans */
-function eraseSelection(): void {
-  const sel = window.getSelection()
-  if (!sel || sel.rangeCount === 0) return
-  const range = sel.getRangeAt(0)
-  const host = range.commonAncestorContainer
-  const root = (host.nodeType === 1 ? (host as Element) : host.parentElement)?.closest('.df-edit')
-  if (!root) return
-  const marks = Array.from(root.querySelectorAll('.df-hl')).filter((m) => range.intersectsNode(m))
-  marks.forEach((m) => {
-    const parent = m.parentNode
-    if (!parent) return
-    while (m.firstChild) parent.insertBefore(m.firstChild, m)
-    parent.removeChild(m)
-    parent.normalize()
-  })
-  sel.removeAllRanges()
-}
-
-type Nib = 'chisel' | 'bullet' | 'fine'
-
-// three nib shapes: slant / round / fine tip
-const PEN_TIPS = {
-  slant: {
-    d: 'M0 8.90395V8.90755V14.6331H14.2627L14.2627 2.31478C14.2627 1.28051 14.2625 0.762792 14.0449 0.454428C13.9929 0.380825 13.944 0.325003 13.8662 0.255209C13.1837 -0.357086 12.1504 0.280438 11.4834 0.627279L2.04883 5.53353L2.04642 5.53478C1.30365 5.92102 0.931451 6.11457 0.660156 6.39779C0.420078 6.6485 0.2376 6.94898 0.125977 7.27767C0 7.64881 0 8.06767 0 8.90395Z',
-    ty: 1.37,
-  },
-  round: {
-    d: 'M0 7.34442V7.35451V15.6738H14.2627V7.35451C14.2627 6.30373 14.2619 5.77805 14.1963 5.33791C13.8575 3.06672 12.262 1.22144 10.1338 0.523454C8.00559 -0.17453 6.2573 -0.17444 4.12891 0.523454C2.00052 1.22135 0.404217 3.06658 0.0654296 5.33791C0 5.77663 0 6.30042 0 7.34442Z',
-    ty: 0.33,
-  },
-  fine: {
-    d: 'M0.327148 2.21365C0.000249654 2.85536 0 3.69574 0 5.37576V16.0261H14.2627V5.37576C14.2627 3.69588 14.2624 2.85534 13.9355 2.21365C13.6479 1.64916 13.1885 1.18974 12.624 0.902125C10.262 -0.300971 3.99787 -0.300446 1.6377 0.902125C1.0733 1.18975 0.614736 1.64922 0.327148 2.21365Z',
-    ty: -0.03,
-  },
-} as const
-const PEN_BAND = 'M8 57.0525H34.1475V67.7492H8V57.0525Z'
-
-/** pen icon, sized by CSS height */
-function MarkerIcon({ nib, color }: { nib: Nib; color: string }) {
-  const id = useId()
-  const tip = nib === 'chisel' ? PEN_TIPS.slant : nib === 'bullet' ? PEN_TIPS.round : PEN_TIPS.fine
-  const tipTop = `color-mix(in srgb, ${color}, white 8%)`
-  return (
-    <svg viewBox="0 0 43 170" fill="none" className="df-mk" aria-hidden="true">
-      <g filter={`url(#${id}-f)`}>
-        <g clipPath={`url(#${id}-c)`}>
-          <path
-            d="M8 45.3892V57.0525H34.1475V45.3892C34.1475 42.9072 33.4998 40.4681 32.2684 38.3131L31.2726 36.5705C30.0412 34.4155 29.3934 31.9764 29.3934 29.4944V15.4541H12.7541V29.4944C12.7541 31.9764 12.1064 34.4155 10.8749 36.5705L9.87916 38.3131C8.64773 40.4681 8 42.9072 8 45.3892Z"
-            fill={`url(#${id}-p0)`}
-          />
-          <path d="M8 57.0525H34.1475V158.652H8V57.0525Z" fill={`url(#${id}-p1)`} />
-        </g>
-      </g>
-      <path d={PEN_BAND} style={{ fill: color }} />
-      <path d={PEN_BAND} fill={`url(#${id}-p2)`} style={{ mixBlendMode: 'color-dodge' }} />
-      <g transform={`translate(13.943 ${tip.ty})`}>
-        <path d={tip.d} fill={`url(#${id}-tg)`} />
-        <path d={tip.d} fill={`url(#${id}-sh)`} />
-      </g>
-      <defs>
-        <filter id={`${id}-f`} x="-0.262451" y="10.1509" width="43" height="160" filterUnits="userSpaceOnUse" colorInterpolationFilters="sRGB">
-          <feFlood floodOpacity="0" result="bg" />
-          <feColorMatrix in="SourceAlpha" type="matrix" values="0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 127 0" result="ha" />
-          <feOffset dy="2" />
-          <feGaussianBlur stdDeviation="2.5" />
-          <feColorMatrix type="matrix" values="0 0 0 0 0.45098 0 0 0 0 0.341176 0 0 0 0 0.290196 0 0 0 0.06 0" />
-          <feBlend mode="normal" in2="bg" result="e1" />
-          <feColorMatrix in="SourceAlpha" type="matrix" values="0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 127 0" result="ha2" />
-          <feOffset dy="3" />
-          <feGaussianBlur stdDeviation="4" />
-          <feColorMatrix type="matrix" values="0 0 0 0 0.45098 0 0 0 0 0.341176 0 0 0 0 0.290196 0 0 0 0.12 0" />
-          <feBlend mode="normal" in2="e1" result="e2" />
-          <feBlend mode="normal" in="SourceGraphic" in2="e2" result="shape" />
-        </filter>
-        <linearGradient id={`${id}-sh`} x1="21" y1="0" x2="21" y2="16" gradientUnits="userSpaceOnUse">
-          <stop stopColor="#ffffff" stopOpacity="0.24" />
-          <stop offset="0.18" stopColor="#ffffff" stopOpacity="0.12" />
-          <stop offset="0.42" stopColor="#ffffff" stopOpacity="0" />
-        </linearGradient>
-        <linearGradient id={`${id}-p0`} x1="8" y1="37.1987" x2="34.1475" y2="37.1987" gradientUnits="userSpaceOnUse">
-          <stop stopColor="#DBDBDB" />
-          <stop offset="0.0637281" stopColor="#EBEBEB" />
-          <stop offset="0.178482" stopColor="#DADADA" />
-          <stop offset="0.48833" stopColor="#F6F6F6" />
-          <stop offset="0.757139" stopColor="#EFEFEF" />
-          <stop offset="1" stopColor="#DDDDDD" />
-        </linearGradient>
-        <linearGradient id={`${id}-p1`} x1="8" y1="110.162" x2="34.1475" y2="110.162" gradientUnits="userSpaceOnUse">
-          <stop stopColor="#DBDBDB" />
-          <stop offset="0.0637281" stopColor="#EBEBEB" />
-          <stop offset="0.178482" stopColor="#DADADA" />
-          <stop offset="0.48833" stopColor="#F6F6F6" />
-          <stop offset="0.757139" stopColor="#EFEFEF" />
-          <stop offset="1" stopColor="#DDDDDD" />
-        </linearGradient>
-        <linearGradient id={`${id}-p2`} x1="8" y1="62.9951" x2="34.1475" y2="62.9951" gradientUnits="userSpaceOnUse">
-          <stop stopColor="#1D1D1D" stopOpacity="0" />
-          <stop offset="0.497299" stopColor="#4F4F4F" />
-          <stop offset="1" stopColor="#313131" stopOpacity="0" />
-        </linearGradient>
-        <clipPath id={`${id}-c`}>
-          <rect width="144" height="27" fill="white" transform="translate(7.73755 159.151) rotate(-90)" />
-        </clipPath>
-        <linearGradient id={`${id}-tg`} x1="21" y1="0" x2="21" y2="16" gradientUnits="userSpaceOnUse">
-          <stop style={{ stopColor: tipTop }} />
-          <stop offset="1" style={{ stopColor: color }} />
-        </linearGradient>
-      </defs>
-    </svg>
-  )
-}
-
-const NIBS: Nib[] = ['chisel', 'bullet', 'fine']
-
-/** highlighter palette that blooms open */
-function HighlighterTray({ panelWidth = 360 }: { panelWidth?: number }) {
-  const reduce = useReducedMotion()
-  const [open, setOpen] = useState(false)
-  const [color, setColor] = useState('sun')
-  const [nib, setNib] = useState<Nib>('chisel')
-  const [erasing, setErasing] = useState(false)
-  const current = HIGHLIGHTERS.find((h) => h.id === color) ?? HIGHLIGHTERS[0]
-
-  // armed only while palette open
-  useEffect(() => {
-    if (!open) return
-    // tint selection with the marker colour
-    document.body.classList.add('df-armed')
-    document.body.style.setProperty(
-      '--df-sel',
-      erasing ? 'rgba(120, 120, 120, 0.18)' : `color-mix(in srgb, ${current.color} 55%, transparent)`,
-    )
-    const apply = () =>
-      window.setTimeout(() => {
-        if (erasing) eraseSelection()
-        else highlightSelection(current.color, current.glow, nib)
-      }, 0)
-    document.addEventListener('mouseup', apply)
-    document.addEventListener('touchend', apply)
-    return () => {
-      document.removeEventListener('mouseup', apply)
-      document.removeEventListener('touchend', apply)
-      document.body.classList.remove('df-armed')
-      document.body.style.removeProperty('--df-sel')
-    }
-  }, [open, erasing, nib, current.color, current.glow])
-
-  return (
-    // fixed placeholder; bloom surface absolute on top
-    <div className="df-hltool">
-      <motion.div
-        className="df-hltool-bloom"
-        data-open={open}
-        animate={{ width: open ? panelWidth : 60, height: open ? 112 : 60, borderRadius: open ? 28 : 30 }}
-        transition={reduce ? { duration: 0 } : { type: 'spring', bounce: 0.26, duration: 0.5 }}
-      >
-        <AnimatePresence initial={false} mode="wait">
-          {open ? (
-            <motion.div
-              key="panel"
-              className="df-hltool-inner"
-              role="group"
-              aria-label="Highlighters"
-              initial={{ opacity: 0, y: 2 }}
-              animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -3, scale: 0.98 }}
-              transition={{ duration: 0.1 }}
-            >
-              <button className="df-hltool-handle" aria-label="Close highlighters" onClick={() => setOpen(false)} />
-              <div className="df-hltool-row">
-                <div className="df-nibs" role="group" aria-label="Nib">
-                  {NIBS.map((n) => (
-                    <button
-                      key={n}
-                      type="button"
-                      className={nib === n && !erasing ? 'df-nib is-active' : 'df-nib'}
-                      aria-pressed={nib === n && !erasing}
-                      aria-label={`${n} nib`}
-                      title={n}
-                      onClick={() => {
-                        setNib(n)
-                        setErasing(false)
-                      }}
-                    >
-                      <MarkerIcon nib={n} color={current.color} />
-                    </button>
-                  ))}
-                </div>
-                <span className="df-hltool-div" />
-                <div className="df-dots" role="group" aria-label="Colour">
-                  {HIGHLIGHTERS.map((h) => (
-                    <button
-                      key={h.id}
-                      type="button"
-                      className={color === h.id && !erasing ? 'df-dot is-active' : 'df-dot'}
-                      style={{ '--dot': h.color } as React.CSSProperties}
-                      data-glow={h.glow ? 'true' : undefined}
-                      aria-pressed={color === h.id && !erasing}
-                      aria-label={h.label}
-                      title={h.label}
-                      onClick={() => {
-                        setColor(h.id)
-                        setErasing(false)
-                      }}
-                    />
-                  ))}
-                </div>
-                <span className="df-hltool-div" />
-                <button
-                  type="button"
-                  className={erasing ? 'df-eraserbtn is-active' : 'df-eraserbtn'}
-                  aria-pressed={erasing}
-                  aria-label="Eraser"
-                  title="Eraser"
-                  onClick={() => setErasing((e) => !e)}
-                >
-                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-                    <path d="M8.5 20H20" />
-                    <path d="M5 16.5l7.5-7.5a2.2 2.2 0 0 1 3.1 0l2.9 2.9a2.2 2.2 0 0 1 0 3.1L14.5 20H8z" />
-                  </svg>
-                </button>
-              </div>
-            </motion.div>
-          ) : (
-            <motion.button
-              key="trigger"
-              type="button"
-              className="df-hltool-trigger"
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              exit={{ opacity: 0 }}
-              transition={{ delay: 0.24, duration: 0.12 }}
-              aria-label="Open highlighters"
-              onClick={() => setOpen(true)}
-            >
-              <span className="df-hltool-pen">
-                <MarkerIcon nib="chisel" color={current.color} />
-              </span>
-            </motion.button>
-          )}
-        </AnimatePresence>
-      </motion.div>
-    </div>
-  )
-}
-
 type StickerItem = { src: string; width: string; rotate: number; pos: React.CSSProperties; lamp?: boolean; stuck?: boolean }
 type StickerSet = { id: string; name: string; thumb: string; items: StickerItem[] }
 
@@ -526,50 +243,6 @@ const DESKFOLIO_WARM_SRCS: string[] = [
   '/stickers/devices/github-ipad.svg', // dev-activity iPad shell
   '/mort-profile.webp', // about-page avatar
 ]
-
-const STICKER_MENU_SETS = ['workspace', 'journal', 'stationery']
-  .map((id) => STICKER_SETS.find((set) => set.id === id))
-  .filter((set): set is StickerSet => Boolean(set))
-
-/** set picker menu */
-function StickerMenu({ value, onChange }: { value: string; onChange: (id: string) => void }) {
-  const reduce = useReducedMotion()
-  return (
-    <div className="df-sticker-picker" role="radiogroup" aria-label="Table sticker set">
-      {STICKER_MENU_SETS.map((set) => {
-        const active = value === set.id
-        return (
-          <button
-            key={set.id}
-            type="button"
-            className={active ? 'df-sticker-choice is-active' : 'df-sticker-choice'}
-            role="radio"
-            aria-checked={active}
-            aria-label={set.name}
-            title={set.name}
-            onClick={() => onChange(set.id)}
-          >
-            {active && (
-              <motion.span
-                className="df-sticker-choice-thumb"
-                layoutId="df-sticker-choice-thumb"
-                transition={reduce ? { duration: 0 } : { type: 'spring', bounce: 0.28, duration: 0.36 }}
-              />
-            )}
-            <motion.img
-              src={set.thumb}
-              alt=""
-              draggable={false}
-              decoding="async"
-              animate={active ? { y: -2, scale: 1.06 } : { y: 0, scale: 1 }}
-              transition={reduce ? { duration: 0 } : { type: 'spring', bounce: 0.3, duration: 0.34 }}
-            />
-          </button>
-        )
-      })}
-    </div>
-  )
-}
 
 // drop-in entrance (transform/opacity only)
 function dropIn(rotate: number, i: number, reduce: boolean) {
@@ -652,7 +325,7 @@ function warmImage(src: string) {
 
 // mat-object editing
 // long-press to lift + open edit menu; overrides live in shared context
-type MatOverride = { left?: number; top?: number; scale?: number; rotate?: number; src?: string; href?: string; deleted?: boolean }
+type MatOverride = { left?: number; top?: number; scale?: number; rotate?: number; src?: string; deleted?: boolean }
 type MatEditApi = {
   activeKey: string | null
   setActiveKey: (key: string | null) => void
@@ -797,23 +470,7 @@ const LbTrash = (p: React.SVGProps<SVGSVGElement>) => (
     <path d="M14.5 16.5L14.5 10.5" />
   </svg>
 )
-const LbLink = (p: React.SVGProps<SVGSVGElement>) => (
-  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" {...p}>
-    <path d="M10 13a5 5 0 0 0 7.1 0l2-2a5 5 0 0 0-7.1-7.1l-1.1 1.1" />
-    <path d="M14 11a5 5 0 0 0-7.1 0l-2 2a5 5 0 0 0 7.1 7.1l1.1-1.1" />
-  </svg>
-)
-
-const DEFAULT_DEV_ACTIVITY_LINK = 'https://github.com/mortspace'
-const DEV_ACTIVITY_LINK_STORAGE_KEY = 'df-dev-activity-link'
-
-function normalizeExternalLink(value: string) {
-  const trimmed = value.trim()
-  if (!trimmed) return DEFAULT_DEV_ACTIVITY_LINK
-  if (/^[a-z][a-z0-9+.-]*:\/\//i.test(trimmed)) return trimmed
-  return `https://${trimmed}`
-}
-
+const DEFAULT_DEV_ACTIVITY_LINK = 'https://github.com/Omzee15'
 
 // library tile artwork: static icon for sentinels, else the sticker image
 function StickerTile({ src }: { src: string }) {
@@ -864,17 +521,11 @@ type MatObjectKind = 'sticker' | 'polaroid' | 'device' | 'object'
 function MatObjectMenu({ objectKey, kind, scale, rotate, flip, dx = 0, themes, baseSrc }: { objectKey: string; kind: MatObjectKind; scale: number; rotate: number; flip: boolean; dx?: number; themes?: StickerTheme[]; baseSrc?: string }) {
   const reduce = useReducedMotion()
   const { setActiveKey, overrides, patch, remove, tableSrcs } = useMatEdit()
-  const [view, setView] = useState<'menu' | 'resize' | 'library' | 'link' | 'theme'>('menu')
+  const [view, setView] = useState<'menu' | 'resize' | 'library' | 'theme'>('menu')
   const currentSrc = overrides[objectKey]?.src ?? themes?.[0]?.src
   // open Replace on the current sticker's tab
   const [libCat, setLibCat] = useState(() => CAT_OF.get(overrides[objectKey]?.src ?? baseSrc ?? '') ?? LIB_TABS[0].id)
-  const currentHref = overrides[objectKey]?.href ?? DEFAULT_DEV_ACTIVITY_LINK
-  const [hrefDraft, setHrefDraft] = useState(currentHref)
   const close = () => setActiveKey(null)
-
-  useEffect(() => {
-    if (view === 'link') setHrefDraft(currentHref)
-  }, [currentHref, view])
 
   // Replace library: every sticker except those on the desk
   const libItems = useMemo(() => STICKER_LIBRARY.filter((src) => !tableSrcs.has(src)), [tableSrcs])
@@ -886,31 +537,24 @@ function MatObjectMenu({ objectKey, kind, scale, rotate, flip, dx = 0, themes, b
   const libH = 34 + 8 + libGridH + 20 // tab row + gap + grid + padding
 
   // menu rows count
-  const menuRows = 1 + (kind === 'sticker' ? 1 : 0) + (kind === 'device' ? 1 : 0) + (themes ? 1 : 0) + 1
+  const canDelete = kind !== 'device'
+  const menuRows = 1 + (kind === 'sticker' ? 1 : 0) + (themes ? 1 : 0) + (canDelete ? 1 : 0)
   // centred on object, plus clamp nudge
   const xPos = dx ? `calc(-50% + ${dx}px)` : '-50%'
   const dims =
     view === 'library'
       ? { width: 326, height: libH, borderRadius: 22 }
-      : view === 'link'
-        ? { width: 270, height: 118, borderRadius: 22 }
       : view === 'theme'
         ? { width: 236, height: 112, borderRadius: 22 }
       : view === 'resize'
         ? { width: 244, height: 138, borderRadius: 22 }
         : { width: 170, height: 12 + menuRows * 46, borderRadius: 20 }
 
-  const saveLink = (e: React.FormEvent) => {
-    e.preventDefault()
-    patch(objectKey, { href: normalizeExternalLink(hrefDraft) })
-    setView('menu')
-  }
-
   return (
     <motion.div
       className="df-matmenu"
       data-flip={flip ? 'below' : 'above'}
-      role={view === 'link' ? 'dialog' : 'menu'}
+      role="menu"
       aria-label={kind === 'sticker' ? 'Edit sticker' : 'Edit object'}
       onPointerDown={(e) => e.stopPropagation()}
       initial={reduce ? false : { opacity: 0, scale: 0.66, x: xPos, ...dims }}
@@ -936,19 +580,16 @@ function MatObjectMenu({ objectKey, kind, scale, rotate, flip, dx = 0, themes, b
                 <LbReplace className="df-matmenu-ico" /> Replace
               </button>
             )}
-            {kind === 'device' && (
-              <button type="button" className="df-matmenu-row" onClick={() => setView('link')}>
-                <LbLink className="df-matmenu-ico" /> Change link
-              </button>
-            )}
             {themes && (
               <button type="button" className="df-matmenu-row" onClick={() => setView('theme')}>
                 <span className="df-matmenu-ico df-matmenu-themedot" style={{ background: (themes.find((t) => t.src === currentSrc) ?? themes[0]).swatch }} aria-hidden="true" /> Theme
               </button>
             )}
-            <button type="button" className="df-matmenu-row df-matmenu-row--danger" onClick={() => { remove(objectKey); close() }}>
-              <LbTrash className="df-matmenu-ico" /> Delete
-            </button>
+            {canDelete && (
+              <button type="button" className="df-matmenu-row df-matmenu-row--danger" onClick={() => { remove(objectKey); close() }}>
+                <LbTrash className="df-matmenu-ico" /> Delete
+              </button>
+            )}
           </div>
         )}
         {view === 'resize' && (
@@ -980,22 +621,6 @@ function MatObjectMenu({ objectKey, kind, scale, rotate, flip, dx = 0, themes, b
             </div>
             <button type="button" className="df-matmenu-done" onClick={() => setView('menu')}>Done</button>
           </div>
-        )}
-        {view === 'link' && (
-          <form className="df-matmenu-link" onSubmit={saveLink}>
-            <label className="df-matmenu-link-label" htmlFor={`${objectKey}-link`}>GitHub link</label>
-            <input
-              id={`${objectKey}-link`}
-              className="df-matmenu-link-input"
-              value={hrefDraft}
-              placeholder="https://github.com/you"
-              onChange={(e) => setHrefDraft(e.currentTarget.value)}
-            />
-            <div className="df-matmenu-link-actions">
-              <button type="button" className="df-matmenu-link-btn" onClick={() => setView('menu')}>Cancel</button>
-              <button type="submit" className="df-matmenu-link-btn df-matmenu-link-btn--primary">Save</button>
-            </div>
-          </form>
         )}
         {view === 'library' && (
           <div className="df-matmenu-lib">
@@ -1812,150 +1437,17 @@ const LAMP_ITEM = STICKER_SETS.find((s) => s.id === 'workspace')?.items.find((it
 const LAMP_DEFAULT_SCALE = 1.15
 const LAMP_DEFAULT_ROTATE = 10
 
-// cover colours: light pastel set
-const COVER_THEMES: Array<{ id: string; name: string; base: string; ink: 'light' | 'dark' }> = [
-  { id: 'powder', name: 'Powder', base: '#f4c9d6', ink: 'dark' },
-  { id: 'garden-blush', name: 'Garden blush', base: '#e9bdc8', ink: 'dark' },
-  { id: 'blush', name: 'Blush', base: '#f3a3bd', ink: 'dark' },
-  { id: 'coral', name: 'Coral', base: '#f79a86', ink: 'dark' },
-  { id: 'apricot', name: 'Apricot', base: '#ffc196', ink: 'dark' },
-  { id: 'butter', name: 'Butter', base: '#ffe27a', ink: 'dark' },
-  { id: 'lemon-cream', name: 'Lemon cream', base: '#ffedaa', ink: 'dark' },
-  { id: 'mint', name: 'Mint', base: '#a7e0c2', ink: 'dark' },
-  { id: 'milk-mint', name: 'Milk mint', base: '#c8ead8', ink: 'dark' },
-  { id: 'sage', name: 'Sage', base: '#9fc59f', ink: 'dark' },
-  { id: 'sky', name: 'Sky', base: '#a9d4ea', ink: 'dark' },
-  { id: 'periwinkle', name: 'Periwinkle', base: '#b6bdee', ink: 'dark' },
-  { id: 'lilac', name: 'Lilac', base: '#d4c7e3', ink: 'dark' },
-  { id: 'cotton-candy', name: 'Cotton candy', base: '#f2c2df', ink: 'dark' },
-]
+type CoverTheme = { id: string; name: string; base: string; ink: 'light' | 'dark' }
+const SAGE_COVER_THEME: CoverTheme = { id: 'sage', name: 'Sage', base: '#9fc59f', ink: 'dark' }
 
 /** cover gradient + ink vars from base colour */
-function coverVars(theme: (typeof COVER_THEMES)[number]): React.CSSProperties {
+function coverVars(theme: CoverTheme): React.CSSProperties {
   return {
     '--df-cover-1': `color-mix(in srgb, ${theme.base}, white 14%)`,
     '--df-cover-2': theme.base,
     '--df-cover-3': `color-mix(in srgb, ${theme.base}, black 16%)`,
     '--df-cover-ink': theme.ink === 'light' ? '#eef3f1' : '#5b4a52',
   } as React.CSSProperties
-}
-
-/** pill button that opens a swatch popover */
-function SwatchPicker({
-  label,
-  value,
-  options,
-  onChange,
-}: {
-  label: string
-  value: string
-  options: Array<{ id: string; name: string; swatch: string }>
-  onChange: (id: string) => void
-}) {
-  const reduce = useReducedMotion()
-  const [open, setOpen] = useState(false)
-  const ref = useRef<HTMLDivElement>(null)
-  const triggerRef = useRef<HTMLButtonElement>(null)
-  const current = options.find((o) => o.id === value) ?? options[0]
-
-  // popover blooms out of the pill; swatches stagger in
-  const popVariants: Variants = {
-    hidden: { opacity: 0, scale: 0.82, x: '-50%', y: -8 },
-    visible: {
-      opacity: 1,
-      scale: 1,
-      x: '-50%',
-      y: 0,
-      transition: reduce
-        ? { duration: 0 }
-        : { type: 'spring', bounce: 0.36, duration: 0.42, staggerChildren: 0.016, delayChildren: 0.04 },
-    },
-    exit: {
-      opacity: 0,
-      scale: 0.92,
-      x: '-50%',
-      y: -6,
-      transition: reduce ? { duration: 0 } : { duration: 0.15, ease: 'easeIn' },
-    },
-  }
-  const swVariants: Variants = {
-    hidden: { opacity: 0, scale: 0.6 },
-    visible: { opacity: 1, scale: 1, transition: reduce ? { duration: 0 } : { type: 'spring', bounce: 0.3, duration: 0.32 } },
-  }
-
-  useEffect(() => {
-    if (!open) return
-    const onDown = (e: PointerEvent) => {
-      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false)
-    }
-    // Escape closes and returns focus to trigger
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') {
-        setOpen(false)
-        triggerRef.current?.focus()
-      }
-    }
-    document.addEventListener('pointerdown', onDown)
-    document.addEventListener('keydown', onKey)
-    return () => {
-      document.removeEventListener('pointerdown', onDown)
-      document.removeEventListener('keydown', onKey)
-    }
-  }, [open])
-
-  return (
-    <div className="df-picker" ref={ref}>
-      <button
-        type="button"
-        ref={triggerRef}
-        className={open ? 'df-picker-trigger is-open' : 'df-picker-trigger'}
-        aria-expanded={open}
-        aria-haspopup="true"
-        aria-label={`${label}: ${current.name}`}
-        onClick={() => setOpen((o) => !o)}
-      >
-        <span className="df-picker-chip" style={{ '--sw': current.swatch } as React.CSSProperties} />
-        <span className="df-picker-label">{label}</span>
-      </button>
-      <AnimatePresence>
-        {open && (
-          <motion.div
-            className="df-picker-pop"
-            role="group"
-            aria-label={label}
-            style={{ left: '50%' }}
-            variants={popVariants}
-            initial="hidden"
-            animate="visible"
-            exit="exit"
-          >
-            {options.map((o) => (
-              <motion.button
-                key={o.id}
-                type="button"
-                className={value === o.id ? 'df-sw is-active' : 'df-sw'}
-                style={{ '--sw': o.swatch } as React.CSSProperties}
-                variants={swVariants}
-                whileHover={reduce ? undefined : { scale: 1.18, y: -2 }}
-                whileTap={reduce ? undefined : { scale: 0.9 }}
-                aria-pressed={value === o.id}
-                aria-label={o.name}
-                title={o.name}
-                onClick={() => {
-                  onChange(o.id)
-                  setOpen(false)
-                }}
-              />
-            ))}
-          </motion.div>
-        )}
-      </AnimatePresence>
-    </div>
-  )
-}
-
-function CoverColorPicker({ value, onChange }: { value: string; onChange: (id: string) => void }) {
-  return <SwatchPicker label="cover colour" value={value} onChange={onChange} options={COVER_THEMES.map((t) => ({ id: t.id, name: t.name, swatch: t.base }))} />
 }
 
 // desk surfaces; cutting-mats share a white grid
@@ -1968,156 +1460,18 @@ const matBg = (r1: string, r2: string, r3: string) =>
     `radial-gradient(130% 120% at 50% 0%, ${r1} 0%, ${r2} 70%, ${r3} 100%)`,
   ].join(', ')
 
-const BACKGROUND_THEMES: Array<{ id: string; name: string; swatch: string; style: React.CSSProperties }> = [
-  { id: 'mat', name: 'Green mat', swatch: '#2f6f5b', style: { backgroundColor: '#2f6f5b', backgroundImage: matBg('#347a64', '#285446', '#20473b'), '--df-cast': 'rgba(15, 30, 24, 0.5)' } as React.CSSProperties },
-  { id: 'matblue', name: 'Blue mat', swatch: '#2f5a6f', style: { backgroundColor: '#2f5a6f', backgroundImage: matBg('#36728c', '#284c5c', '#203f4d'), '--df-cast': 'rgba(14, 28, 36, 0.5)' } as React.CSSProperties },
-  { id: 'matpink', name: 'Pink mat', swatch: '#a85d72', style: { backgroundColor: '#a85d72', backgroundImage: matBg('#b56a80', '#8c4a5e', '#76414f'), '--df-cast': 'rgba(70, 30, 44, 0.42)' } as React.CSSProperties },
-  {
-    id: 'pinkscene',
-    name: 'Pink scene',
-    swatch: '#f9c5d5',
-    style: {
-      backgroundColor: '#f9c5d5',
-      backgroundImage:
-        "radial-gradient(62% 58% at 50% 52%, rgba(255, 247, 226, 0.06) 0%, rgba(94, 48, 68, 0.06) 52%, rgba(94, 48, 68, 0.31) 100%), linear-gradient(rgba(235, 139, 174, 0.24), rgba(218, 119, 157, 0.3)), url('/backgrounds/pink-desk-scene.webp')",
-      backgroundSize: '100% 100%, 100% 100%, cover',
-      backgroundPosition: 'center center, center center, center center',
-      backgroundRepeat: 'no-repeat, no-repeat, no-repeat',
-      '--df-cast': 'rgba(98, 45, 66, 0.36)',
-    } as React.CSSProperties,
-  },
-  {
-    id: 'cream-botanical',
-    name: 'Cream botanical',
-    swatch: '#eeefdc',
-    style: {
-      backgroundColor: '#eeefdc',
-      backgroundImage:
-        "radial-gradient(62% 58% at 50% 52%, rgba(255, 250, 232, 0.05) 0%, rgba(72, 82, 58, 0.05) 52%, rgba(72, 82, 58, 0.24) 100%), linear-gradient(rgba(223, 226, 205, 0.18), rgba(201, 211, 188, 0.23)), url('/backgrounds/cream-botanical.webp')",
-      backgroundSize: '100% 100%, 100% 100%, cover',
-      backgroundPosition: 'center center, center center, center center',
-      backgroundRepeat: 'no-repeat, no-repeat, no-repeat',
-      '--df-cast': 'rgba(64, 80, 58, 0.32)',
-    } as React.CSSProperties,
-  },
-  {
-    id: 'sky-cloud-grid',
-    name: 'Sky cloud',
-    swatch: '#b1d4f3',
-    style: {
-      backgroundColor: '#b1d4f3',
-      backgroundImage:
-        "radial-gradient(62% 58% at 50% 52%, rgba(255, 255, 244, 0.05) 0%, rgba(42, 74, 108, 0.05) 52%, rgba(42, 74, 108, 0.26) 100%), linear-gradient(rgba(112, 166, 214, 0.16), rgba(86, 146, 202, 0.22)), url('/backgrounds/sky-cloud-grid.webp')",
-      backgroundSize: '100% 100%, 100% 100%, cover',
-      backgroundPosition: 'center center, center center, center center',
-      backgroundRepeat: 'no-repeat, no-repeat, no-repeat',
-      '--df-cast': 'rgba(45, 80, 116, 0.34)',
-    } as React.CSSProperties,
-  },
-  {
-    id: 'blue-cute-scene',
-    name: 'Blue scene',
-    swatch: '#91c7fe',
-    style: {
-      backgroundColor: '#91c7fe',
-      backgroundImage:
-        "radial-gradient(62% 58% at 50% 52%, rgba(255, 252, 236, 0.05) 0%, rgba(32, 72, 112, 0.05) 52%, rgba(32, 72, 112, 0.28) 100%), linear-gradient(rgba(95, 157, 222, 0.18), rgba(70, 132, 202, 0.24)), url('/backgrounds/blue-cute-scene.webp')",
-      backgroundSize: '100% 100%, 100% 100%, cover',
-      backgroundPosition: 'center center, center center, center center',
-      backgroundRepeat: 'no-repeat, no-repeat, no-repeat',
-      '--df-cast': 'rgba(38, 75, 118, 0.36)',
-    } as React.CSSProperties,
-  },
-  {
-    id: 'wood',
-    name: 'Wood desk',
-    swatch: '#a9794e',
-    style: {
-      backgroundColor: '#a9794e',
-      backgroundImage:
-        'repeating-linear-gradient(91deg, rgba(60,30,10,0.08) 0 1px, transparent 1px 6px), repeating-linear-gradient(90deg, rgba(255,240,220,0.05) 0 2px, transparent 2px 9px), linear-gradient(180deg, #b9885a, #9c6e44)',
-      '--df-cast': 'rgba(55, 32, 14, 0.4)',
-    } as React.CSSProperties,
-  },
-  { id: 'cream', name: 'Cream', swatch: '#efe7d8', style: { backgroundColor: '#efe7d8', backgroundImage: 'radial-gradient(130% 120% at 50% 0%, #f6efe2 0%, #ebe1d0 70%, #e3d8c4 100%)', '--df-cast': 'rgba(120, 100, 88, 0.3)' } as React.CSSProperties },
-  { id: 'lavender', name: 'Lavender', swatch: '#ddd4ec', style: { backgroundColor: '#ddd4ec', backgroundImage: 'radial-gradient(130% 120% at 50% 0%, #ece6f6 0%, #ddd4ec 70%, #cfc4e3 100%)', '--df-cast': 'rgba(110, 100, 128, 0.3)' } as React.CSSProperties },
-]
-
-// switchable theme assets, warmed on idle after the first reveal
-const DESKFOLIO_THEME_WARM_SRCS: string[] = [
-  ...new Set([
-    ...BACKGROUND_THEMES
-      .map((t) => /url\(['"]?([^'")]+)/.exec(String(t.style.backgroundImage ?? ''))?.[1])
-      .filter((u): u is string => !!u),
-    ...STICKER_SETS.flatMap((s) => s.items.map((it) => it.src)).filter((src) => !src.startsWith('__component:')),
-    '/stickers/devices/github-ipad.svg',
-  ]),
-]
+const GREEN_MAT_STYLE = {
+  backgroundColor: '#2f6f5b',
+  backgroundImage: matBg('#347a64', '#285446', '#20473b'),
+  '--df-cast': 'rgba(15, 30, 24, 0.5)',
+} as React.CSSProperties
 
 // warm only the "+" panel's first tab on idle
 const DESKFOLIO_LIBRARY_WARM_SRCS: string[] = STICKER_LIBRARY.filter(
   (src) => !src.startsWith('__component:') && CAT_OF.get(src) === LIB_TABS[0].id,
 )
 
-/** swatch picker for the desk surface */
-function BackgroundPicker({ value, onChange }: { value: string; onChange: (id: string) => void }) {
-  return <SwatchPicker label="background" value={value} onChange={onChange} options={BACKGROUND_THEMES.map((t) => ({ id: t.id, name: t.name, swatch: t.swatch }))} />
-}
-
-// blessed cover/background pairings
-type Pairing = { name: string; coverId: string; bgId: string }
-const PAIRINGS: Pairing[] = [
-  { name: 'Pink Scene', coverId: 'milk-mint', bgId: 'pinkscene' }, // default
-  { name: 'Strawberry Matcha', coverId: 'powder', bgId: 'mat' }, // pink on matcha green
-  { name: 'Lemon Lagoon', coverId: 'butter', bgId: 'matblue' }, // yellow on teal
-  { name: 'Coral Reef', coverId: 'coral', bgId: 'matblue' }, // coral on teal
-  { name: 'Minty Rose', coverId: 'mint', bgId: 'matpink' }, // mint on rose
-  { name: 'Milk Mint Rose', coverId: 'milk-mint', bgId: 'matpink' }, // softer mint on rose
-  { name: 'Periwinkle Clover', coverId: 'periwinkle', bgId: 'mat' }, // blue-violet on green
-  { name: 'Bluebird Oak', coverId: 'sky', bgId: 'wood' }, // sky blue on wood
-  { name: 'Honey Oak', coverId: 'butter', bgId: 'wood' }, // butter on grain
-  { name: 'Sage Woodgrain', coverId: 'sage', bgId: 'wood' }, // sage on wood
-  { name: 'Apricot Dusk', coverId: 'apricot', bgId: 'lavender' }, // apricot on lavender
-  { name: 'Blue Cream Soda', coverId: 'sky', bgId: 'cream' }, // sky blue on cream
-  { name: 'Pink Scene', coverId: 'milk-mint', bgId: 'pinkscene' }, // mint on pink scene
-  { name: 'Botanical Blush', coverId: 'garden-blush', bgId: 'cream-botanical' }, // rose on cream botanical
-  { name: 'Sky Lemon Cream', coverId: 'lemon-cream', bgId: 'sky-cloud-grid' }, // lemon on blue grid
-  { name: 'Blue Cotton Candy', coverId: 'cotton-candy', bgId: 'blue-cute-scene' }, // candy on blue scene
-]
-
-const SURPRISE_FIRST_PAIRINGS: Pairing[] = [
-  { name: 'Pink Scene', coverId: 'milk-mint', bgId: 'pinkscene' },
-  { name: 'Milk Mint Rose', coverId: 'milk-mint', bgId: 'matpink' },
-  { name: 'Periwinkle Clover', coverId: 'periwinkle', bgId: 'mat' },
-]
-
-// initial-load desk: one of these two combos at random
-const LOAD_DEFAULT_PAIRINGS: Pairing[] = [
-  { name: 'Periwinkle Clover', coverId: 'periwinkle', bgId: 'mat' },
-  { name: 'Milk Mint Rose', coverId: 'milk-mint', bgId: 'matpink' },
-]
-
-const BACKGROUND_COVER_MATCH: Record<string, string> = {
-  pinkscene: 'milk-mint',
-  'cream-botanical': 'garden-blush',
-  'sky-cloud-grid': 'lemon-cream',
-  'blue-cute-scene': 'cotton-candy',
-}
-
-// each set's paired background (Workspace has none)
-const SET_BACKGROUND: Record<string, string> = {
-  journal: 'pinkscene',
-  stationery: 'sky-cloud-grid',
-}
-
-/** pick a random blessed palette, avoiding the current combo */
-function randomPairing(curCoverId?: string, curBgId?: string): Pairing {
-  const pool = PAIRINGS.filter((p) => p.coverId !== curCoverId || p.bgId !== curBgId)
-  const from = pool.length ? pool : PAIRINGS
-  return from[Math.floor(Math.random() * from.length)]
-}
-
-// phone peel-sticker pool (re-rolled by surprise)
+// phone peel-sticker pool
 const MOBILE_STICKER_POOL = [
   'sticker-cutie-bear.svg', 'sticker-cutie-chick.svg', 'sticker-cutie-pig.svg', 'sticker-cutie-snail.svg',
   'sticker-cutie-cat-meow.svg', 'sticker-cutie-cat-wiggle.svg', 'sticker-cutie-sleepy-bunny.svg',
@@ -2137,33 +1491,6 @@ function pickMobileStickers(prev?: [string, string]): [string, string] {
     Math.floor(Math.random() * (rest.length ? rest.length : MOBILE_STICKER_POOL.length - 1))
   ]
   return [a, b]
-}
-
-/** "surprise me" pill, re-rolls the whole palette */
-function ShufflePalette({ onShuffle }: { onShuffle: () => void }) {
-  const reduce = useReducedMotion()
-  const [spin, setSpin] = useState(0)
-  return (
-    <button
-      type="button"
-      className="df-picker-trigger df-shuffle"
-      aria-label="Surprise me — pick a random palette"
-      title="Surprise me"
-      onClick={() => {
-        onShuffle()
-        setSpin((s) => s + 1)
-      }}
-    >
-      <motion.span
-        className="df-shuffle-icon"
-        animate={reduce ? undefined : { rotate: spin * 360 }}
-        transition={reduce ? { duration: 0 } : { type: 'spring', bounce: 0.32, duration: 0.6 }}
-      >
-        <LbSparkle />
-      </motion.span>
-      <span className="df-picker-label">surprise</span>
-    </button>
-  )
 }
 
 // mat-unroll intro: two black panels slide apart
@@ -2196,19 +1523,14 @@ const IconGitHub = (p: React.SVGProps<SVGSVGElement>) => (
     <path d="M12 .297c-6.63 0-12 5.373-12 12 0 5.303 3.438 9.8 8.205 11.385.6.113.82-.258.82-.577 0-.285-.01-1.04-.015-2.04-3.338.724-4.042-1.61-4.042-1.61C4.422 18.07 3.633 17.7 3.633 17.7c-1.087-.744.084-.729.084-.729 1.205.084 1.838 1.236 1.838 1.236 1.07 1.835 2.809 1.305 3.495.998.108-.776.417-1.305.76-1.605-2.665-.3-5.466-1.332-5.466-5.93 0-1.31.465-2.38 1.235-3.22-.135-.303-.54-1.523.105-3.176 0 0 1.005-.322 3.3 1.23.96-.267 1.98-.399 3-.405 1.02.006 2.04.138 3 .405 2.28-1.552 3.285-1.23 3.285-1.23.645 1.653.24 2.873.12 3.176.765.84 1.23 1.91 1.23 3.22 0 4.61-2.805 5.625-5.475 5.92.42.36.81 1.096.81 2.22 0 1.606-.015 2.896-.015 3.286 0 .315.21.69.825.57C20.565 22.092 24 17.592 24 12.297c0-6.627-5.373-12-12-12" />
   </svg>
 )
-const IconNpm = (p: React.SVGProps<SVGSVGElement>) => (
+const IconInstagram = (p: React.SVGProps<SVGSVGElement>) => (
   <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" {...p}>
-    <path d="M1.763 0C.786 0 0 .786 0 1.763v20.474C0 23.214.786 24 1.763 24h20.474c.977 0 1.763-.786 1.763-1.763V1.763C24 .786 23.214 0 22.237 0zM5.13 5.323l13.837.019-.009 13.836h-3.464l.01-10.382h-3.456L12.04 19.17H5.113z" />
+    <path d="M7.8 2h8.4A5.8 5.8 0 0 1 22 7.8v8.4a5.8 5.8 0 0 1-5.8 5.8H7.8A5.8 5.8 0 0 1 2 16.2V7.8A5.8 5.8 0 0 1 7.8 2Zm0 2A3.8 3.8 0 0 0 4 7.8v8.4A3.8 3.8 0 0 0 7.8 20h8.4a3.8 3.8 0 0 0 3.8-3.8V7.8A3.8 3.8 0 0 0 16.2 4H7.8Zm4.2 3.2A4.8 4.8 0 1 1 12 16.8a4.8 4.8 0 0 1 0-9.6Zm0 2A2.8 2.8 0 1 0 12 14.8a2.8 2.8 0 0 0 0-5.6Zm5.05-2.45a1.2 1.2 0 1 1 0 2.4a1.2 1.2 0 0 1 0-2.4Z" />
   </svg>
 )
-const IconX = (p: React.SVGProps<SVGSVGElement>) => (
+const IconLinkedIn = (p: React.SVGProps<SVGSVGElement>) => (
   <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" {...p}>
-    <path d="M18.901 1.153h3.68l-8.04 9.19L24 22.846h-7.406l-5.8-7.584-6.638 7.584H.474l8.6-9.83L0 1.154h7.594l5.243 6.932ZM17.61 20.644h2.039L6.486 3.24H4.298Z" />
-  </svg>
-)
-const IconDribbble = (p: React.SVGProps<SVGSVGElement>) => (
-  <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" {...p}>
-    <path d="M12 24C5.385 24 0 18.615 0 12S5.385 0 12 0s12 5.385 12 12-5.385 12-12 12zm10.12-10.358c-.35-.11-3.17-.953-6.384-.438 1.34 3.684 1.887 6.684 1.992 7.308 2.3-1.555 3.936-4.02 4.395-6.87zm-6.115 7.808c-.153-.9-.75-4.032-2.19-7.77l-.066.02c-5.79 2.015-7.86 6.025-8.04 6.4 1.73 1.358 3.92 2.166 6.29 2.166 1.42 0 2.77-.29 4-.814zm-11.62-2.58c.232-.4 3.045-5.055 8.332-6.765.135-.045.27-.084.405-.12-.26-.585-.54-1.167-.832-1.74C7.17 11.775 2.206 11.71 1.756 11.7l-.004.312c0 2.633.998 5.037 2.634 6.855zm-2.42-8.955c.46.008 4.683.026 9.477-1.248-1.698-3.018-3.53-5.558-3.8-5.928-2.868 1.35-5.01 3.99-5.676 7.17zM9.6 2.052c.282.38 2.145 2.914 3.822 6 3.645-1.365 5.19-3.44 5.373-3.702-1.81-1.61-4.19-2.586-6.795-2.586-.825 0-1.63.1-2.4.285zm10.335 3.483c-.218.29-1.935 2.493-5.724 4.04.24.49.47.985.68 1.486.08.18.15.36.22.53 3.41-.43 6.8.26 7.14.33-.02-2.42-.88-4.64-2.31-6.38z" />
+    <path d="M20.45 20.45h-3.56v-5.58c0-1.33-.03-3.04-1.85-3.04c-1.85 0-2.14 1.45-2.14 2.94v5.68H9.35V9h3.41v1.56h.05a3.74 3.74 0 0 1 3.36-1.85c3.6 0 4.27 2.37 4.27 5.46v6.28ZM5.34 7.43a2.06 2.06 0 1 1 0-4.13a2.06 2.06 0 0 1 0 4.13Zm1.78 13.02H3.56V9h3.56v11.45ZM22.22 0H1.77C.79 0 0 .77 0 1.72v20.56C0 23.23.79 24 1.77 24h20.45c.98 0 1.78-.77 1.78-1.72V1.72C24 .77 23.2 0 22.22 0Z" />
   </svg>
 )
 
@@ -2218,13 +1540,13 @@ const PORTFOLIO_COVER = (
     <span className="df-cover-band" aria-hidden="true" />
     <div className="df-cover-label">
       <span className="df-cover-mark" aria-hidden="true">
-        <span className="df-cover-mono">MS</span>
+        <span className="df-cover-mono">OG</span>
         <svg className="df-cover-cursor" viewBox="0 0 24 24" fill="currentColor">
           <path d="M4.037 4.688a.495.495 0 0 1 .651-.651l16 6.5a.5.5 0 0 1-.063.947l-6.124 1.58a2 2 0 0 0-1.438 1.435l-1.579 6.126a.5.5 0 0 1-.947.063z" />
         </svg>
       </span>
-      <p className="df-cover-title">portfolio</p>
-      <span className="df-cover-sub">design + code</span>
+      <p className="df-cover-title">Om Gupta</p>
+      <span className="df-cover-sub">AI + robotics</span>
       <span className="df-cover-lines" aria-hidden="true" />
     </div>
     <span className="df-cover-hint">tap to open <span className="df-heart" aria-hidden="true">♡</span></span>
@@ -2242,21 +1564,22 @@ const PORTFOLIO_PAGES: React.ReactNode[] = [
     <LbSparkle className="df-doodle df-doodle--soft df-doodle--lilac" style={{ bottom: 165, right: 74, width: 14, height: 14 }} />
     <h3 className="df-hello">about me <span className="df-heart" aria-hidden="true">♡</span></h3>
     <div className="df-about-head">
-      <span className="df-avatar"><img src="/mort-profile.webp" alt="Mort" loading="lazy" decoding="async" /></span>
+      <span className="df-avatar"><img src="/mort-profile.webp" alt="Om Gupta" loading="lazy" decoding="async" /></span>
       <div>
-        <Editable className="df-name" placeholder="your name" initial="Mort" />
-        <span className="df-role"><LbSparkle /> front-end developer</span>
+        <Editable className="df-name" placeholder="your name" initial="Om Gupta" />
+        <span className="df-role"><LbSparkle /> AI-first builder</span>
       </div>
     </div>
     <div className="df-card">
       <Editable
         className="df-edit--body"
         placeholder="a little about you…"
-        initial="I design and build playful interface components that move like real things. I love the tiny details that make software feel alive."
+        initial="I build AI-first products that turn messy real-world problems into useful, working systems - from intelligent web apps to robotics that can listen, reason, and respond."
       />
     </div>
     <p className="df-label df-label--push">currently…</p>
-    <span className="df-date"><LbHeart /> open to freelance &amp; collabs</span>
+    <span className="df-date"><LbHeart /> B.Tech CSE AIML - SMIT</span>
+    <span className="df-date"><LbSparkle /> Diploma in Robotics - VES Polytechnic</span>
   </div>,
   // spread 1 right: skills
   <div className="df-page" key="p1">
@@ -2269,34 +1592,42 @@ const PORTFOLIO_PAGES: React.ReactNode[] = [
     <div className="df-card df-card--lilac">
       <p className="df-card-title"><LbSparkle /> i build with</p>
       <ul className="df-tags">
+        <li className="df-tag">Go</li>
         <li className="df-tag">React</li>
         <li className="df-tag">TypeScript</li>
-        <li className="df-tag">Motion</li>
-        <li className="df-tag">SVG</li>
-        <li className="df-tag">CSS</li>
-        <li className="df-tag">Canvas</li>
+        <li className="df-tag">Python</li>
+        <li className="df-tag">PostgreSQL</li>
+        <li className="df-tag">FastAPI</li>
+        <li className="df-tag">Docker</li>
+        <li className="df-tag">Electron</li>
       </ul>
     </div>
     <div className="df-card">
-      <p className="df-card-title"><LbHeart /> i care about</p>
+      <p className="df-card-title"><LbHeart /> AI stack</p>
       <ul className="df-tags df-tags--blush">
-        <li className="df-tag">micro-interactions</li>
-        <li className="df-tag">motion design</li>
-        <li className="df-tag">accessibility</li>
-        <li className="df-tag">design systems</li>
+        <li className="df-tag">LangChain</li>
+        <li className="df-tag">Gemini</li>
+        <li className="df-tag">TensorFlow</li>
+        <li className="df-tag">Robotics</li>
+        <li className="df-tag">Kafka</li>
+        <li className="df-tag">KiCad</li>
       </ul>
     </div>
   </div>,
   // spread 2 left: selected work
   <div className="df-page" key="p2">
-    <h3 className="df-hello">selected work</h3>
+    <h3 className="df-hello">everything i built</h3>
     <div className="df-proj">
-      <p className="df-proj-head"><DfProjName href="#/pullcord" variant={0}>PullCord</DfProjName><span className="df-proj-meta">theme toggle</span></p>
-      <Editable className="df-edit--body df-proj-desc" placeholder="describe it…" initial="A ceiling pull-cord on a real Verlet rope. Tug it to fire any action." />
+      <p className="df-proj-head"><DfProjName href="https://portfolio-template.buildc3.tech/" variant={0}>Explainable AI</DfProjName><span className="df-proj-meta">Python · SHAP · LIME</span></p>
+      <Editable className="df-edit--body df-proj-desc" placeholder="describe it…" initial="Random Forest Titanic model with feature dependencies, SHAP values, feature importance, and decision-boundary interpretation." />
     </div>
     <div className="df-proj">
-      <p className="df-proj-head"><DfProjName href="#/animaps" variant={2}>AniMaps</DfProjName><span className="df-proj-meta">map videos</span></p>
-      <Editable className="df-edit--body df-proj-desc" placeholder="describe it…" initial="Animated travel-map videos for reels and route explainers. Fly the camera, draw the trail, then export." />
+      <p className="df-proj-head"><DfProjName href="https://portfolio-template.buildc3.tech/" variant={2}>HireScout</DfProjName><span className="df-proj-meta">Gemini · LangChain</span></p>
+      <Editable className="df-edit--body df-proj-desc" placeholder="describe it…" initial="Mock interview platform with resume parsing, real-time voice interviews, and personalized AI feedback, scaled to 1,200 daily users." />
+    </div>
+    <div className="df-proj">
+      <p className="df-proj-head"><DfProjName href="https://portfolio-template.buildc3.tech/" variant={1}>BillBot</DfProjName><span className="df-proj-meta">FastAPI · PostgreSQL</span></p>
+      <Editable className="df-edit--body df-proj-desc" placeholder="describe it…" initial="Telegram bill-management bot that parses bill images with Gemini, stores structured OCR data, and serves live bill tracking." />
     </div>
   </div>,
   // spread 2 right: more work
@@ -2304,14 +1635,17 @@ const PORTFOLIO_PAGES: React.ReactNode[] = [
     <LbSparkle className="df-doodle df-doodle--butter" style={{ bottom: 16, right: 12, width: 22, height: 22 }} />
     <h3 className="df-hello df-hello--lilac">more work</h3>
     <div className="df-proj">
-      <p className="df-proj-head"><DfProjName href="#/blob" variant={3}>Blob</DfProjName><span className="df-proj-meta">mascot</span></p>
-      <Editable className="df-edit--body df-proj-desc" placeholder="describe it…" initial="A squishy jelly mascot that reacts and emotes inside a log-out modal." />
+      <p className="df-proj-head"><DfProjName href="https://portfolio-template.buildc3.tech/" variant={3}>EchoDcrypt</DfProjName><span className="df-proj-meta">Canvas · Electron</span></p>
+      <Editable className="df-edit--body df-proj-desc" placeholder="describe it…" initial="Client-side LSB steganography tool for hiding and extracting messages in images and videos without data leaving the device." />
     </div>
     <div className="df-proj">
-      <p className="df-proj-head"><DfProjName href="#/deskfolio" variant={1}>DeskFolio</DfProjName><span className="df-proj-meta">you're reading it</span></p>
-      <Editable className="df-edit--body df-proj-desc" placeholder="describe it…" initial="A little book that blooms open, turns its pages on a spring, and shuts again. This one." />
+      <p className="df-proj-head"><DfProjName href="https://portfolio-template.buildc3.tech/" variant={1}>NeuroDB</DfProjName><span className="df-proj-meta">PostgreSQL · Gemini</span></p>
+      <Editable className="df-edit--body df-proj-desc" placeholder="describe it…" initial="AI-powered PostgreSQL desktop manager with natural-language SQL, schema context, DBML diagrams, snippets, exports, and 25,000+ active users." />
     </div>
-    <p className="df-sig">…and more on the shelf <span className="df-heart" aria-hidden="true">♡</span></p>
+    <div className="df-proj">
+      <p className="df-proj-head"><DfProjName href="https://portfolio-template.buildc3.tech/" variant={0}>ProjectNest</DfProjName><span className="df-proj-meta">React · Go</span></p>
+      <Editable className="df-edit--body df-proj-desc" placeholder="describe it…" initial="AI-enhanced project management platform with JWT auth, visual collaboration, and a DevSprint-AI assistant." />
+    </div>
   </div>,
   // spread 3 left: experience timeline
   <div className="df-page" key="p4">
@@ -2320,63 +1654,67 @@ const PORTFOLIO_PAGES: React.ReactNode[] = [
       <li className="df-xp-row">
         <span className="df-xp-dot" aria-hidden="true" />
         <div>
-          <p className="df-xp-role">Independent UI Developer</p>
-          <p className="df-xp-meta">FeralUI · now</p>
+          <p className="df-xp-role">Software Engineering Intern</p>
+          <p className="df-xp-meta">Pi-Labs · Go, PostgreSQL, Docker, JWT/RBAC, AI/audio workflows.</p>
         </div>
       </li>
       <li className="df-xp-row">
         <span className="df-xp-dot" aria-hidden="true" />
         <div>
-          <p className="df-xp-role">Front-end Developer</p>
-          <p className="df-xp-meta">Lunar Interfaces · 2023 to 2025</p>
+          <p className="df-xp-role">Software Engineering Simulation</p>
+          <p className="df-xp-meta">J.P. Morgan Chase &amp; Co. · Spring Boot, Kafka, JPA, H2, REST APIs.</p>
         </div>
       </li>
       <li className="df-xp-row">
         <span className="df-xp-dot" aria-hidden="true" />
         <div>
-          <p className="df-xp-role">Junior Front-end Developer</p>
-          <p className="df-xp-meta">Pixelmint Studio · 2021 to 2023</p>
+          <p className="df-xp-role">GenAI Job Simulation</p>
+          <p className="df-xp-meta">Boston Consulting Group · AI financial chatbot using Python, pandas, and SEC filings.</p>
+        </div>
+      </li>
+      <li className="df-xp-row">
+        <span className="df-xp-dot" aria-hidden="true" />
+        <div>
+          <p className="df-xp-role">AI &amp; Robotics Developer</p>
+          <p className="df-xp-meta">iHub SMIT · SmitBot on Raspberry Pi 5 with LLaMA, Piper TTS, STT, and servo gestures.</p>
         </div>
       </li>
     </ul>
   </div>,
-  // spread 3 right: contact
+  // spread 3 right: achievements
   <div className="df-page" key="p5">
     <LbHeart className="df-doodle" style={{ top: 2, right: 6, width: 16, height: 16 }} />
-    <h3 className="df-hello df-hello--lilac">say hi <span className="df-heart" aria-hidden="true">♡</span></h3>
-    <Editable
-      className="df-edit--body"
-      placeholder="a friendly note…"
-      initial="Got a project, a question, or just want to talk shop? I'd love to hear from you."
-    />
-    <ul className="df-links">
-      <li>
-        <a className="df-link" href="https://github.com/mortspace" target="_blank" rel="noreferrer"><IconGitHub /> GitHub</a>
-      </li>
-      <li>
-        <a className="df-link" href="https://www.npmjs.com/~moratspace" target="_blank" rel="noreferrer"><IconNpm /> npm</a>
-      </li>
-      <li>
-        <a className="df-link" href="https://x.com/SolutionB2u" target="_blank" rel="noreferrer"><IconX /> X</a>
-      </li>
-      <li>
-        <a className="df-link" href="https://dribbble.com/Solution-B" target="_blank" rel="noreferrer"><IconDribbble /> Dribbble</a>
-      </li>
+    <h3 className="df-hello df-hello--lilac">achievements</h3>
+    <ul className="df-checklist">
+      <CheckItem placeholder="…" initial="Devopia'24 - 1st Position for an autonomous Drone Delivery System." />
+      <CheckItem placeholder="…" initial="Techno-Innova'23 - 1st Position for AI predictive maintenance research." />
+      <CheckItem placeholder="…" initial="Technothon'21 - 1st Position for an AI-powered Stock Management System." />
+      <CheckItem placeholder="…" initial="Protech 2023 - 1st Position for an IoT agriculture soil examining system." />
     </ul>
-    <p className="df-sig">say hi anytime <span className="df-heart" aria-hidden="true">♡</span></p>
   </div>,
-  // spread 4 left: colophon
+  // spread 4 left: stats + links
   <div className="df-page" key="p6">
     <LbSparkle className="df-doodle df-doodle--mint" style={{ top: 2, right: 6, width: 16, height: 16 }} />
-    <h3 className="df-hello">made by hand</h3>
+    <h3 className="df-hello">stats + links</h3>
     <div className="df-card">
-      <Editable
-        className="df-edit--body"
-        placeholder="a little note…"
-        initial="This portfolio is a book you can actually open. It blooms apart, turns its pages on a spring, and shuts again. Hand-built in React, no page-flip library, no images. Like everything else in here."
-      />
+      <ul className="df-tags">
+        <li className="df-tag">10+ projects</li>
+        <li className="df-tag">40k+ users</li>
+        <li className="df-tag">10+ national awards</li>
+      </ul>
     </div>
-    <p className="df-sig">thanks for the curiosity <span className="df-heart" aria-hidden="true">♡</span></p>
+    <ul className="df-links">
+      <li>
+        <a className="df-link" href="https://github.com/Omzee15" target="_blank" rel="noreferrer"><IconGitHub /> GitHub</a>
+      </li>
+      <li>
+        <a className="df-link" href="https://www.linkedin.com/in/om-gupta915/" target="_blank" rel="noreferrer"><IconLinkedIn /> LinkedIn</a>
+      </li>
+      <li>
+        <a className="df-link" href="https://instagram.com/om_gupta915" target="_blank" rel="noreferrer"><IconInstagram /> Instagram</a>
+      </li>
+    </ul>
+    <p className="df-sig">buildc3.tech <span className="df-heart" aria-hidden="true">♡</span></p>
   </div>,
   // spread 4 right: closing finale
   <div className="df-page df-thanks" key="p7">
@@ -2574,8 +1912,8 @@ export function DeskFolioPage() {
     return () => mq.removeEventListener('change', on)
   }, [])
 
-  // a touch smaller than the mat
-  const spread = Math.min(800, Math.round(viewport.w * 0.82))
+  // a touch larger now that the desktop canvas is dedicated to the workspace mat
+  const spread = Math.min(880, Math.round(viewport.w * 0.88))
   const pageW = Math.max(150, Math.round(spread / 2))
   const pageH = Math.round(pageW * 1.34)
   const stageScale = Math.min(1, viewport.h / (pageH + 376))
@@ -2588,21 +1926,14 @@ export function DeskFolioPage() {
   const mScale = mRightW / M_PAGE_W
   const mobile = { pageW: M_PAGE_W, pageH: M_PAGE_H, scale: mScale, w: Math.round(mRightW), h: Math.round(mRightW * 1.34) }
 
-  // every load opens on one of the two blessed defaults
-  const [seed] = useState(() => LOAD_DEFAULT_PAIRINGS[Math.floor(Math.random() * LOAD_DEFAULT_PAIRINGS.length)])
-  const [coverId, setCoverId] = useState(seed.coverId)
-  const coverTheme = COVER_THEMES.find((t) => t.id === coverId) ?? COVER_THEMES[0]
-  const [bgId, setBgId] = useState(seed.bgId)
-  const bgTheme = BACKGROUND_THEMES.find((t) => t.id === bgId) ?? BACKGROUND_THEMES[0]
+  const coverTheme = SAGE_COVER_THEME
+  const bgTheme = GREEN_MAT_STYLE
   // pre-warm reveal images during the mat-roll window
   useEffect(() => {
-    const initialBg = BACKGROUND_THEMES.find((t) => t.id === seed.bgId)
-    const bgUrl = /url\(['"]?([^'")]+)/.exec(String(initialBg?.style.backgroundImage ?? ''))?.[1]
-    const srcs = bgUrl ? [...DESKFOLIO_WARM_SRCS, bgUrl] : DESKFOLIO_WARM_SRCS
-    const imgs = srcs.map(warmImage)
+    const imgs = DESKFOLIO_WARM_SRCS.map(warmImage)
     return () => imgs.forEach((img) => { img.src = '' })
-  }, [seed])
-  // after the first reveal, warm the other themes' assets on idle
+  }, [])
+  // after the first reveal, warm the add-sticker first tab on idle
   useEffect(() => {
     let cancelled = false
     let imgs: HTMLImageElement[] = []
@@ -2635,12 +1966,7 @@ export function DeskFolioPage() {
       schedule(step)
     }
 
-    const start = () => {
-      warmChunked(DESKFOLIO_THEME_WARM_SRCS, () => {
-        // then warm the add-sticker first tab
-        warmChunked(DESKFOLIO_LIBRARY_WARM_SRCS)
-      })
-    }
+    const start = () => warmChunked(DESKFOLIO_LIBRARY_WARM_SRCS)
 
     if (ric) idleIds.push(ric(start, { timeout: 2500 }) as number)
     else timeoutIds.push(window.setTimeout(start, 1600))
@@ -2652,14 +1978,9 @@ export function DeskFolioPage() {
       imgs.forEach((img) => { img.src = '' })
     }
   }, [])
-  const [stickerSet, setStickerSet] = useState('workspace')
-  // the two phone peel-stickers, re-rolled by surprise
-  const [mStickers, setMStickers] = useState<[string, string]>(() => pickMobileStickers())
-  // lamp starts off, resets to off on set switch
+  const stickerSet = 'workspace'
+  const [mStickers] = useState<[string, string]>(() => pickMobileStickers())
   const [lampOn, setLampOn] = useState(false)
-  useEffect(() => {
-    setLampOn(false) // set switch returns to unlit lamp
-  }, [stickerSet])
   // shared mat-object edit state
   const [matOverrides, setMatOverrides] = useState<Record<string, MatOverride>>({
     'desk-lamp': { scale: LAMP_DEFAULT_SCALE, rotate: LAMP_DEFAULT_ROTATE },
@@ -2674,23 +1995,6 @@ export function DeskFolioPage() {
     setAddOpen(false)
     setActiveMatKey(null)
   }, [])
-  const [devActivityLink, setDevActivityLink] = useState(() => {
-    try {
-      return window.localStorage.getItem(DEV_ACTIVITY_LINK_STORAGE_KEY) || DEFAULT_DEV_ACTIVITY_LINK
-    } catch {
-      return DEFAULT_DEV_ACTIVITY_LINK
-    }
-  })
-  useEffect(() => {
-    const nextLink = matOverrides['dev-activity']?.href
-    if (!nextLink || nextLink === devActivityLink) return
-    setDevActivityLink(nextLink)
-    try {
-      window.localStorage.setItem(DEV_ACTIVITY_LINK_STORAGE_KEY, nextLink)
-    } catch {
-      /* localStorage unavailable; in-memory edit still works */
-    }
-  }, [devActivityLink, matOverrides])
   const matEdit = useMemo<MatEditApi>(() => {
     // srcs on this set's desk, excluded from Replace
     const set = STICKER_SETS.find((s) => s.id === stickerSet)
@@ -2701,10 +2005,6 @@ export function DeskFolioPage() {
       if (ov?.deleted) return
       tableSrcs.add(ov?.src ?? it.src)
     })
-    // hide the desk Polaroid from Replace while it's out
-    if (stickerSet === 'stationery' && !matOverrides['stationery-polaroid']?.deleted) {
-      tableSrcs.add(POLAROID_SRC)
-    }
     return {
       activeKey: activeMatKey,
       // opening an edit menu closes the Add panel
@@ -2726,40 +2026,8 @@ export function DeskFolioPage() {
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
   }, [activeMatKey])
-  const polaroidOverride = matOverrides['stationery-polaroid']
   const devActivityOverride = matOverrides['dev-activity']
   const lampOverride = matOverrides['desk-lamp']
-  const surpriseStep = useRef(0)
-
-  // Surprise: try the three favourites first, then random
-  const shufflePalette = () => {
-    let p: Pairing | undefined
-    while (surpriseStep.current < SURPRISE_FIRST_PAIRINGS.length) {
-      const candidate = SURPRISE_FIRST_PAIRINGS[surpriseStep.current]
-      surpriseStep.current += 1
-      if (candidate.coverId !== coverId || candidate.bgId !== bgId) {
-        p = candidate
-        break
-      }
-    }
-    p ??= randomPairing(coverId, bgId)
-    setCoverId(p.coverId)
-    setBgId(p.bgId)
-    setMStickers((prev) => pickMobileStickers(prev)) // re-roll phone peel-stickers
-  }
-
-  const chooseBackground = (id: string) => {
-    setBgId(id)
-    const matchingCover = BACKGROUND_COVER_MATCH[id]
-    if (matchingCover) setCoverId(matchingCover)
-  }
-
-  // picking a set scatters its items + switches to its paired background
-  const chooseStickerSet = (id: string) => {
-    setStickerSet(id)
-    const bg = SET_BACKGROUND[id]
-    if (bg) setBgId(bg)
-  }
 
   // book content: portfolio pack (journal pack preserved)
   const cover = SHOW_JOURNAL ? JOURNAL_COVER : PORTFOLIO_COVER
@@ -2783,9 +2051,8 @@ export function DeskFolioPage() {
           className="demo-stage deskfolio-demo-stage"
           style={
             {
-              '--df-picker-w': `${pageW}px`,
               '--df-stage-scale': stageScale,
-              ...bgTheme.style,
+              ...bgTheme,
             } as React.CSSProperties
           }
         >
@@ -2799,22 +2066,6 @@ export function DeskFolioPage() {
             />
           )}
           {!matDown && <MatRollIntro />}
-          <motion.div
-            className="df-pickers"
-            initial={false}
-            animate={
-              reduce
-                ? { opacity: 1, y: 0, scale: 1 }
-                : { opacity: intro >= 3 ? 1 : 0, y: intro >= 3 ? 0 : -14, scale: intro >= 3 ? 1 : 0.96 }
-            }
-            transition={reduce ? { duration: 0 } : STAGE_SPRING}
-          >
-            <CoverColorPicker value={coverId} onChange={(id) => { haptic('selection'); setCoverId(id) }} />
-            <BackgroundPicker value={bgId} onChange={(id) => { haptic('selection'); chooseBackground(id) }} />
-            <ShufflePalette onShuffle={() => { haptic('nudge'); shufflePalette() }} />
-            {/* set picker is desktop-only */}
-            {!compact && <StickerMenu value={stickerSet} onChange={(id) => { haptic('selection'); chooseStickerSet(id) }} />}
-          </motion.div>
           {/* mounted once the mat is down; desktop only */}
           {intro >= 2 && !compact && <MatStickers setId={stickerSet} compact={compact} />}
           {/* user-added stickers */}
@@ -2840,43 +2091,6 @@ export function DeskFolioPage() {
               </div>
             </>
           )}
-          {/* Polaroid on the Stationery desk, a placed object */}
-          <AnimatePresence>
-            {!compact && stickerSet === 'stationery' && intro >= 2 && !polaroidOverride?.deleted && (
-              <DraggableMatObject
-                key="polaroid"
-                objectKey="stationery-polaroid"
-                editable
-                kind="polaroid"
-                className="df-sticker-dragger df-polaroid-dragger"
-                style={
-                  {
-                    left: '17%',
-                    top: '79.5%',
-                    // Resize maps to --df-pol-scale, Tilt to --df-pol-rotate
-                    ...((polaroidOverride?.scale ?? 1) !== 1
-                      ? { '--df-pol-scale': 0.26 * (polaroidOverride?.scale ?? 1) }
-                      : {}),
-                    ...((polaroidOverride?.rotate ?? 0) !== 0
-                      ? { '--df-pol-rotate': `${-7 + (polaroidOverride?.rotate ?? 0)}deg` }
-                      : {}),
-                  } as React.CSSProperties
-                }
-              >
-                <motion.div
-                  className="df-polaroid-mat"
-                  initial={reduce ? false : { opacity: 0, y: -26 }}
-                  animate={reduce ? { opacity: 1 } : { opacity: 1, y: 0 }}
-                  exit={reduce ? { opacity: 0 } : { opacity: 0, y: -16, transition: { duration: 0.18, ease: 'easeIn' } }}
-                  transition={reduce ? { duration: 0 } : { type: 'spring', bounce: 0.4, duration: 0.6, delay: 0.14 }}
-                >
-                  <div className="df-polaroid-scale">
-                    <PolaroidCamera />
-                  </div>
-                </motion.div>
-              </DraggableMatObject>
-            )}
-          </AnimatePresence>
           {/* dev-activity monitor, draggable; tap opens GitHub */}
           {!compact && intro >= 2 && !devActivityOverride?.deleted && (
             <DraggableMatObject
@@ -2887,11 +2101,10 @@ export function DeskFolioPage() {
               title="Open GitHub · hold to move"
               style={
                 {
-                  // Workspace tucks it lower-left; other sets lower-right
-                  left: stickerSet === 'workspace' ? '2%' : '66.5%',
-                  top: stickerSet === 'workspace' ? '73%' : '80%',
-                  '--df-monitor-scale': devActivityOverride?.scale ?? (stickerSet === 'workspace' ? 0.95 : 1),
-                  '--df-monitor-rotate': `${(stickerSet === 'workspace' ? -13 : -6) + (devActivityOverride?.rotate ?? 0)}deg`,
+                  left: '2%',
+                  top: '73%',
+                  '--df-monitor-scale': devActivityOverride?.scale ?? 0.95,
+                  '--df-monitor-rotate': `${-13 + (devActivityOverride?.rotate ?? 0)}deg`,
                 } as React.CSSProperties
               }
             >
@@ -2901,7 +2114,7 @@ export function DeskFolioPage() {
                 animate={reduce ? { opacity: 1 } : { opacity: 1, y: 0 }}
                 transition={reduce ? { duration: 0 } : { type: 'spring', bounce: 0.4, duration: 0.6, delay: 0.2 }}
               >
-                <DevMonitor href={devActivityLink} />
+                <DevMonitor href={DEFAULT_DEV_ACTIVITY_LINK} />
               </motion.div>
             </DraggableMatObject>
           )}
@@ -2944,7 +2157,7 @@ export function DeskFolioPage() {
           </motion.div>
           {/* lamp + beam render above the book */}
           <AnimatePresence>
-            {!compact && stickerSet === 'workspace' && LAMP_ITEM && !lampOverride?.deleted && (
+            {!compact && LAMP_ITEM && !lampOverride?.deleted && (
               <DraggableMatObject
                 key="desk-lamp"
                 objectKey="desk-lamp"
@@ -2964,10 +2177,10 @@ export function DeskFolioPage() {
               </DraggableMatObject>
             )}
           </AnimatePresence>
-          {/* "tap to light it" hint, Workspace + lamp off */}
+          {/* "tap to light it" hint */}
           {!compact && (
             <AnimatePresence>
-              {stickerSet === 'workspace' && LAMP_ITEM && !lampOverride?.deleted && !lampOn && intro >= 2 && (
+              {LAMP_ITEM && !lampOverride?.deleted && !lampOn && intro >= 2 && (
                 <motion.div
                   className="df-lamp-hint"
                   aria-hidden="true"
@@ -2985,21 +2198,6 @@ export function DeskFolioPage() {
               )}
             </AnimatePresence>
           )}
-          {/* highlighter is desktop-only */}
-          {!compact && (
-            <motion.div
-              className="df-tray-bloom"
-              initial={false}
-              animate={
-                reduce
-                  ? { opacity: 1, y: 0, scale: 1 }
-                  : { opacity: intro >= 3 ? 1 : 0, y: intro >= 3 ? 0 : 18, scale: intro >= 3 ? 1 : 0.9 }
-              }
-              transition={reduce ? { duration: 0 } : { ...STAGE_SPRING, delay: intro >= 3 ? 0.12 : 0 }}
-            >
-              <HighlighterTray panelWidth={Math.min(360, pageW)} />
-            </motion.div>
-          )}
           </MatEditContext.Provider>
         </div>
       </section>
@@ -3012,64 +2210,7 @@ export function DeskFolioPage() {
         <p className="tagline">
           A little book you actually open and write in. Tap the cover and it blooms open, then turn the pages by grabbing a corner and dragging it over. It follows your hand and springs to settle. Every page is yours to write on. No buttons, no images, no engine.
         </p>
-      ) : (
-        <div className="tagline deskfolio-writeup">
-          <div className="df-writeup-intro">
-            <h1 className="df-writeup-name">DeskFolio</h1>
-            <p className="df-writeup-tagline">A pocket-sized portfolio that opens like a book.</p>
-            <p className="df-writeup-copy">
-              Built as a cute artist showcase with draggable desk pieces and editable stickers. What began as a journal idea quietly turned into a portfolio.
-            </p>
-            <p className="df-writeup-copy df-writeup-aside">
-              I was going to name it Cutefolio, but someone had already used it.
-            </p>
-          </div>
-          <div className="df-writeup-pills" aria-label="Deskfolio notes">
-            <span className="df-writeup-pill df-writeup-pill--orange">Long-press edits</span>
-            <span className="df-writeup-pill df-writeup-pill--green">Freepik + hand-built assets</span>
-            <span className="df-writeup-pill df-writeup-pill--blue">React + motion.dev</span>
-          </div>
-          <div className="df-howto">
-            <div className="df-howto-frame">
-              <img
-                className="df-howto-bear"
-                src="/stickers/items/sticker-cutie-bear.svg"
-                width={300}
-                height={297}
-                loading="lazy"
-                decoding="async"
-                alt="A bear sticker on the desk with the long-press edit menu floating above it"
-              />
-              <div className="df-howto-menu" aria-hidden="true">
-                <span className="df-howto-menu-row"><LbResize className="df-howto-menu-ico" /> Resize</span>
-                <span className="df-howto-menu-row"><LbReplace className="df-howto-menu-ico" /> Replace</span>
-                <span className="df-howto-menu-row df-howto-menu-row--danger"><LbTrash className="df-howto-menu-ico" /> Delete</span>
-              </div>
-              {/* pointer cursor */}
-              <svg className="df-howto-cursor" viewBox="0 0 64 64" aria-hidden="true">
-                <path
-                  fillRule="evenodd"
-                  clipRule="evenodd"
-                  d="M7.78696 6.09422C6.7281 5.68898 5.68898 6.7281 6.09422 7.78696L24.9891 57.1574C25.394 58.2154 26.8598 58.2962 27.3786 57.2892L36.7699 39.0589C37.2761 38.0763 38.0763 37.2761 39.0589 36.7699L57.2892 27.3786C58.2962 26.8598 58.2154 25.394 57.1574 24.9891L7.78696 6.09422ZM2.35847 9.21669C0.716609 4.92667 4.92668 0.716611 9.21669 2.35847L58.5871 21.2533C62.8737 22.8939 63.2012 28.8325 59.121 30.9345L40.8908 40.3258C40.6482 40.4507 40.4507 40.6482 40.3258 40.8908L30.9345 59.121C28.8325 63.2012 22.8939 62.8737 21.2533 58.5871L2.35847 9.21669Z"
-                  fill="currentColor"
-                />
-              </svg>
-            </div>
-            <div className="df-howto-text">
-              <span className="df-howto-eyebrow">How to use</span>
-              <p>Press and hold any sticker or desk object and this little menu blooms up: <strong>Resize</strong> to scale it, <strong>Replace</strong> to swap in a different sticker, or <strong>Delete</strong> to clear it off the desk.</p>
-              <p>Drag anything to move it around, and tap the <strong>+</strong> button to add your own.</p>
-            </div>
-          </div>
-          <div className="df-reference-strip">
-            <span className="df-reference-title">References</span>
-            <div className="df-reference-pills">
-              <a href="https://codepen.io/fossheim/pen/xxboBzO" target="_blank" rel="noreferrer">Polaroid</a>
-              <a href="https://codepen.io/kreitlow/pen/mqgxYo" target="_blank" rel="noreferrer">iPod Shuffle</a>
-            </div>
-          </div>
-        </div>
-      )}
+      ) : null}
     </>
   )
 }
