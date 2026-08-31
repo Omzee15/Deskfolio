@@ -1704,6 +1704,93 @@ a.df-proj-name:focus-visible .df-proj-scribble .df-scribble-pen {
   z-index: 0;
 }
 
+/* the teddy: tap to wake the spirit */
+.df-teddy {
+  position: relative;
+  display: block;
+  padding: 0;
+  border: 0;
+  background: none;
+  cursor: pointer;
+  pointer-events: auto;
+  -webkit-tap-highlight-color: transparent;
+  transition: transform 140ms cubic-bezier(0.34, 1.5, 0.6, 1);
+}
+.df-teddy:hover {
+  transform: translateY(-2px) scale(1.04);
+}
+.df-teddy:active {
+  transform: scale(0.96);
+}
+/* on wake the button scales down (driven by motion); don't fight it with :active */
+.df-teddy.is-flashing:active {
+  transform: none;
+}
+/* resting spirit-dog sprite cell (front-facing pose) */
+.df-teddy-dog {
+  display: block;
+  width: 100%;
+  aspect-ratio: 1 / 1;
+  background-repeat: no-repeat;
+  image-rendering: pixelated;
+  filter: drop-shadow(0 3px 3px rgba(18, 38, 31, 0.3));
+}
+.df-teddy:focus-visible {
+  outline: 2px solid rgba(255, 255, 255, 0.9);
+  outline-offset: 3px;
+  border-radius: 12px;
+}
+/* white flash overlay, clipped to the dog silhouette */
+.df-teddy-flash {
+  position: absolute;
+  inset: -6%;
+  border-radius: 24%;
+  background: #fff;
+  opacity: 0;
+  pointer-events: none;
+  mix-blend-mode: screen;
+}
+.df-teddy.is-flashing .df-teddy-flash {
+  animation: df-teddy-flash 500ms ease-out forwards;
+}
+.df-teddy.is-flashing .df-teddy-dog {
+  animation: df-teddy-bleach 500ms ease-out forwards;
+}
+@keyframes df-teddy-flash {
+  0% { opacity: 0; transform: scale(0.7); }
+  22% { opacity: 1; transform: scale(1.15); }
+  60% { opacity: 1; transform: scale(1.25); }
+  100% { opacity: 0; transform: scale(1.7); }
+}
+@keyframes df-teddy-bleach {
+  0% { filter: brightness(1); }
+  35% { filter: brightness(2.6) saturate(0.15); }
+  100% { filter: brightness(1.15) saturate(1); opacity: 1; }
+}
+
+/* the spirit: 8-direction sprite sheet that trails the cursor */
+.df-spirit {
+  position: absolute;
+  left: 0;
+  top: 0;
+  /* square cells; small — ~one third of the very first size */
+  height: clamp(34px, 4.4vw, 66px);
+  aspect-ratio: var(--df-spirit-aspect, 1);
+  z-index: 8;
+  pointer-events: none;
+  background-repeat: no-repeat;
+  image-rendering: pixelated;
+  will-change: transform, background-position;
+  filter: drop-shadow(0 3px 3px rgba(18, 38, 31, 0.3));
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .df-teddy.is-flashing .df-teddy-flash,
+  .df-teddy.is-flashing .df-teddy-dog {
+    animation: none;
+  }
+}
+
 /* interactive desk lamp */
 .df-lamp {
   position: absolute;

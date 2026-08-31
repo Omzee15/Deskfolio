@@ -924,6 +924,262 @@ function DraggableMatObject({
   )
 }
 
+// the teddy sticker: sprite-sheet spirit that trails the cursor.
+// public/spirit-dog.png is an 8-direction walk sheet: 6 columns x 8 rows,
+// each cell SPIRIT_CELL x SPIRIT_CELL. Every ROW is a 6-frame walk cycle for
+// one facing; row order below is fixed by the sheet.
+const SPIRIT_SHEET = '/spirit-dog.png'
+const SPIRIT_CELL = 181
+const SPIRIT_COLS = 6
+const SPIRIT_ROWS = 8
+// resting pose once the spirit has caught up to a still cursor:
+// front-facing "happy" puppy (row 1, col 3 of the sheet, 0-indexed 0,2)
+const SPIRIT_IDLE_ROW = 0
+const SPIRIT_IDLE_COL = 2
+
+// row index per compass heading, matching the sheet's row order:
+// 0 Down · 1 Down-right · 2 Right · 3 Up-right · 4 Up · 5 Up-left · 6 Left · 7 Down-left
+const DIR_DOWN = 0
+const DIR_DOWN_RIGHT = 1
+const DIR_RIGHT = 2
+const DIR_UP_RIGHT = 3
+const DIR_UP = 4
+const DIR_UP_LEFT = 5
+const DIR_LEFT = 6
+const DIR_DOWN_LEFT = 7
+
+// map a movement vector to one of the 8 rows. screen space: +x right, +y down.
+// atan2 sectors, 45deg each, centred on the 8 headings.
+function dirRow(dx: number, dy: number): number {
+  const a = Math.atan2(dy, dx) // -PI..PI, 0 = right, PI/2 = down
+  const sector = Math.round(a / (Math.PI / 4)) & 7 // 0..7, 0=E,1=SE,2=S,3=SW,4=W,5=NW,6=N,7=NE
+  switch (sector) {
+    case 0: return DIR_RIGHT
+    case 1: return DIR_DOWN_RIGHT
+    case 2: return DIR_DOWN
+    case 3: return DIR_DOWN_LEFT
+    case 4: return DIR_LEFT
+    case 5: return DIR_UP_LEFT
+    case 6: return DIR_UP
+    default: return DIR_UP_RIGHT
+  }
+}
+
+/**
+ * Spirit that eases toward the pointer with a long trailing lag.
+ * Picks a sprite ROW from its actual travel direction (8-way) and steps
+ * that row's 6-frame walk cycle whenever it's moving; holds frame 0 at rest.
+ */
+function SpiritCharacter({ start }: { start: { x: number; y: number } }) {
+  const reduce = useReducedMotion()
+  const elRef = useRef<HTMLDivElement>(null)
+  // live pointer target (stage-local px); seeded at the teddy's old spot
+  const targetRef = useRef({ ...start })
+  const posRef = useRef({ ...start })
+  const rowRef = useRef(DIR_DOWN) // current facing row
+  const colRef = useRef(0) // current walk frame (0..5)
+  const stepAccRef = useRef(0)
+  const rafRef = useRef<number | null>(null)
+  const lastTsRef = useRef(0)
+  const idleMsRef = useRef(0) // time since the pointer last moved
+
+  useEffect(() => {
+    const el = elRef.current
+    if (!el) return
+    const stage = el.closest<HTMLElement>('.deskfolio-demo-stage')
+    if (!stage) return
+
+    const onMove = (e: PointerEvent) => {
+      const rect = stage.getBoundingClientRect()
+      const s = rect.width > 0 ? stage.offsetWidth / rect.width : 1
+      targetRef.current = {
+        x: (e.clientX - rect.left) * s,
+        y: (e.clientY - rect.top) * s,
+      }
+      idleMsRef.current = 0
+    }
+    window.addEventListener('pointermove', onMove, { passive: true })
+
+    // gutter-free grid: percentage stepping lands each cell exactly
+    const paint = () => {
+      const px = SPIRIT_COLS > 1 ? (colRef.current / (SPIRIT_COLS - 1)) * 100 : 0
+      const py = SPIRIT_ROWS > 1 ? (rowRef.current / (SPIRIT_ROWS - 1)) * 100 : 0
+      el.style.backgroundPosition = `${px}% ${py}%`
+      el.style.transform =
+        `translate3d(${posRef.current.x}px, ${posRef.current.y}px, 0) translate(-50%, -50%)`
+    }
+
+    if (reduce) {
+      // no chase for reduced-motion: sit at the seed spot in the rest pose
+      rowRef.current = SPIRIT_IDLE_ROW
+      colRef.current = SPIRIT_IDLE_COL
+      paint()
+      return () => window.removeEventListener('pointermove', onMove)
+    }
+
+    const tick = (ts: number) => {
+      const dt = lastTsRef.current ? Math.min(64, ts - lastTsRef.current) : 16
+      lastTsRef.current = ts
+
+      idleMsRef.current += dt
+
+      const pos = posRef.current
+      const tgt = targetRef.current
+      const dx = tgt.x - pos.x
+      const dy = tgt.y - pos.y
+      const dist = Math.hypot(dx, dy)
+
+      // trailing follow: ease a small fraction of the gap each frame.
+      // higher base -> slower catch-up -> longer visible lag.
+      const ease = 1 - Math.pow(0.06, dt / 1000)
+      // cap per-frame travel so the spirit never sprints
+      const maxStep = (dt / 1000) * 190 // px/sec ceiling
+      let mx = dx * ease
+      let my = dy * ease
+      const m = Math.hypot(mx, my)
+      if (m > maxStep) {
+        mx = (mx / m) * maxStep
+        my = (my / m) * maxStep
+      }
+      pos.x += mx
+      pos.y += my
+
+      // face the way we're actually heading (use the real motion vector,
+      // fall back to the gap direction when the step was clamped to ~0)
+      const useX = Math.abs(mx) + Math.abs(my) > 0.15 ? mx : dx
+      const useY = Math.abs(mx) + Math.abs(my) > 0.15 ? my : dy
+
+      // walk while there's meaningful ground to cover AND the pointer is
+      // still "live"; once it's caught up to a still cursor, drop into the
+      // front-facing rest pose instead of freezing on the last walk frame.
+      const settled = idleMsRef.current > 380 && dist < 40
+      if (!settled && dist > 8) {
+        rowRef.current = dirRow(useX, useY)
+        // slower cadence; a touch quicker when far behind
+        stepAccRef.current += dt * (0.0042 + Math.min(0.011, dist / 14000))
+        if (stepAccRef.current >= 1) {
+          stepAccRef.current = 0
+          colRef.current = (colRef.current + 1) % SPIRIT_COLS
+        }
+      } else {
+        rowRef.current = SPIRIT_IDLE_ROW
+        colRef.current = SPIRIT_IDLE_COL
+        stepAccRef.current = 0
+      }
+
+      paint()
+      rafRef.current = requestAnimationFrame(tick)
+    }
+    rafRef.current = requestAnimationFrame(tick)
+
+    return () => {
+      window.removeEventListener('pointermove', onMove)
+      if (rafRef.current != null) cancelAnimationFrame(rafRef.current)
+    }
+  }, [reduce])
+
+  return (
+    <motion.div
+      ref={elRef}
+      className="df-spirit"
+      aria-hidden="true"
+      style={
+        {
+          backgroundImage: `url(${SPIRIT_SHEET})`,
+          backgroundSize: `${SPIRIT_COLS * 100}% ${SPIRIT_ROWS * 100}%`,
+          '--df-spirit-aspect': String(SPIRIT_CELL / SPIRIT_CELL),
+        } as React.CSSProperties
+      }
+      initial={reduce ? false : { opacity: 0, scale: 0.4 }}
+      animate={reduce ? { opacity: 1 } : { opacity: 1, scale: 1 }}
+      transition={reduce ? { duration: 0 } : { type: 'spring', bounce: 0.5, duration: 0.5 }}
+    />
+  )
+}
+
+const TEDDY_SRC = ITM + 'sticker-cutie-bear.svg' // sticker-set slot the spirit dog occupies
+const TEDDY_FLASH_MS = 500
+
+/**
+ * The resting spirit dog, sitting on the desk in its front-facing "happy"
+ * pose (sprite-sheet frame row 0, col 2). Tap it: white flash for half a
+ * second, then it wakes and starts trailing the cursor.
+ */
+function TeddySticker({ item, index, reduce }: { item: StickerItem; index: number; reduce: boolean }) {
+  const [phase, setPhase] = useState<'rest' | 'flash' | 'spirit'>('rest')
+  const seedRef = useRef({ x: 0, y: 0 })
+  const wrapRef = useRef<HTMLDivElement>(null)
+
+  const onActivate = () => {
+    if (phase !== 'rest') return
+    // remember where it sat, in stage-local px, so the spirit spawns there
+    const el = wrapRef.current
+    const stage = el?.closest<HTMLElement>('.deskfolio-demo-stage')
+    if (el && stage) {
+      const sr = stage.getBoundingClientRect()
+      const r = el.getBoundingClientRect()
+      const s = sr.width > 0 ? stage.offsetWidth / sr.width : 1
+      seedRef.current = { x: (r.left + r.width / 2 - sr.left) * s, y: (r.top + r.height / 2 - sr.top) * s }
+    }
+    haptic('nudge')
+    if (reduce) {
+      setPhase('spirit')
+      return
+    }
+    setPhase('flash')
+    window.setTimeout(() => setPhase('spirit'), TEDDY_FLASH_MS)
+  }
+
+  if (phase === 'spirit') return <SpiritCharacter start={seedRef.current} />
+
+  // the resting sprite: one still cell of the walk sheet
+  const restBg = {
+    backgroundImage: `url(${SPIRIT_SHEET})`,
+    backgroundSize: `${SPIRIT_COLS * 100}% ${SPIRIT_ROWS * 100}%`,
+    backgroundPosition: `${(SPIRIT_IDLE_COL / (SPIRIT_COLS - 1)) * 100}% ${(SPIRIT_IDLE_ROW / (SPIRIT_ROWS - 1)) * 100}%`,
+  } as React.CSSProperties
+
+  return (
+    <div
+      ref={wrapRef}
+      className="df-sticker-dragger df-sticker-dragger--stuck df-teddy-dragger"
+      // big while resting; the button scales down toward the moving-spirit size on wake.
+      // sits on open desk between the book and the succulent.
+      style={{ width: 'clamp(88px, 11vw, 164px)', top: '58%', right: '13.5%' }}
+    >
+      <div className="df-sticker-scale">
+        {(() => {
+          const entrance = pressOn(item.rotate, index, false)
+          // resting: drop-in via pressOn. on flash: shrink toward spirit size.
+          const restAnimate = reduce
+            ? { opacity: 1 }
+            : (entrance.animate as { opacity: number; scale: number; rotate: number })
+          return (
+            <motion.button
+              type="button"
+              className={`df-sticker-item df-sticker-stuck df-teddy${phase === 'flash' ? ' is-flashing' : ''}`}
+              aria-label="Wake the spirit dog"
+              onClick={onActivate}
+              initial={reduce ? false : entrance.initial}
+              animate={phase === 'flash' ? { ...restAnimate, scale: 0.4 } : restAnimate}
+              transition={
+                phase === 'flash'
+                  ? { duration: reduce ? 0 : TEDDY_FLASH_MS / 1000, ease: [0.4, 0, 0.2, 1] }
+                  : reduce
+                    ? { duration: 0 }
+                    : entrance.transition
+              }
+            >
+              <span className="df-teddy-dog" style={restBg} aria-hidden="true" />
+              <span className="df-teddy-flash" aria-hidden="true" />
+            </motion.button>
+          )
+        })()}
+      </div>
+    </div>
+  )
+}
+
 function DraggableMatSticker({
   objectKey,
   item,
@@ -1020,6 +1276,11 @@ function DraggableMatSticker({
         </div>
       </DraggableMatObject>
     )
+  }
+
+  // the teddy is a special peel-sticker: tap wakes a cursor-following spirit
+  if (src === TEDDY_SRC) {
+    return <TeddySticker item={item} index={index} reduce={reduce} />
   }
 
   const stuck = isPeelSticker(src)
