@@ -1,0 +1,4 @@
+User-agent: *
+Allow: /
+
+Sitemap: https://book-a-folio.buildc3.tech/sitemap.xml
